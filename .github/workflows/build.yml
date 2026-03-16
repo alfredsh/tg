@@ -21,14 +21,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .buildozer
-          key: buildozer-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-v2-${{ hashFiles('buildozer.spec') }}
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
@@ -36,29 +36,35 @@ jobs:
             autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev \
             cmake libffi-dev libssl-dev \
-            build-essential ccache
+            build-essential ccache \
+            python3-dev
 
       - name: Install Buildozer
         run: |
-          pip install --upgrade pip
+          pip install --upgrade pip setuptools wheel
           pip install Cython==0.29.36
           pip install buildozer==1.5.0
 
       - name: Set JAVA_HOME
         run: |
-          echo "JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))" >> $GITHUB_ENV
+          export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
+          echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
+          java -version
 
       - name: Build APK
         run: |
-          yes | buildozer android debug 2>&1 | tee build.log
-          echo "EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
+          buildozer -v android debug 2>&1 | tee build.log || true
         timeout-minutes: 60
 
-      - name: Show last 50 lines of log
+      - name: Show build result
         if: always()
-        run: tail -50 build.log || true
+        run: |
+          echo "=== ПОСЛЕДНИЕ 100 СТРОК ЛОГА ==="
+          tail -100 build.log || true
+          echo "=== APK файлы ==="
+          find . -name "*.apk" 2>/dev/null || echo "APK не найден"
 
-      - name: Upload log
+      - name: Upload log (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -66,15 +72,15 @@ jobs:
           path: build.log
 
       - name: Upload APK
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: TGSecretChat-debug
           path: bin/*.apk
+          if-no-files-found: warn
           retention-days: 30
 
-      - name: Release
-        if: success()
+      - name: Create Release
+        if: hashFiles('bin/*.apk') != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
