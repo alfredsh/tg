@@ -5,7 +5,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# Права для создания Release
 permissions:
   contents: write
 
@@ -15,39 +14,69 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # Кеш — ускоряет повторные сборки с 30 мин до 5 мин
-      - name: Cache Buildozer global directory
+      - name: Cache .buildozer
         uses: actions/cache@v4
         with:
-          path: .buildozer_cache
+          path: .buildozer
           key: buildozer-${{ hashFiles('buildozer.spec') }}
 
-      # Используем готовый Docker-образ с Android SDK внутри
-      # Это самый надёжный способ — всё уже предустановлено
-      - name: Build APK via Docker
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
         with:
-          command: android debug
-          workdir: .
-          buildozer_version: stable
+          python-version: "3.10"
 
-      # Загружаем APK как артефакт (доступен 30 дней)
-      - name: Upload APK artifact
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            git zip unzip openjdk-17-jdk \
+            autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev \
+            cmake libffi-dev libssl-dev \
+            build-essential ccache
+
+      - name: Install Buildozer
+        run: |
+          pip install --upgrade pip
+          pip install Cython==0.29.36
+          pip install buildozer==1.5.0
+
+      - name: Set JAVA_HOME
+        run: |
+          echo "JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))" >> $GITHUB_ENV
+
+      - name: Build APK
+        run: |
+          yes | buildozer android debug 2>&1 | tee build.log
+          echo "EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
+        timeout-minutes: 60
+
+      - name: Show last 50 lines of log
+        if: always()
+        run: tail -50 build.log || true
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: TGSecretChat-debug
-          path: ${{ steps.buildozer.outputs.filename }}
+          path: bin/*.apk
           retention-days: 30
 
-      # Создаём GitHub Release с APK
-      - name: Create Release
+      - name: Release
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: "TG Secret Chat v1.0.${{ github.run_number }}"
-          body: "Автосборка APK через GitHub Actions"
-          files: ${{ steps.buildozer.outputs.filename }}
+          files: bin/*.apk
