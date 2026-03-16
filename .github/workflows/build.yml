@@ -1,84 +1,81 @@
 name: Build Android APK
 
-# ── Когда запускается ──────────────────────────────────────────────────────
 on:
   push:
-    branches: [ main ]          # При пуше в main
-  workflow_dispatch:             # Или вручную через кнопку в GitHub
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     name: Build APK
-    runs-on: ubuntu-22.04        # Ubuntu — оптимален для Buildozer
+    runs-on: ubuntu-22.04
 
     steps:
-
-      # ── Шаг 1: Получить код из репозитория ──────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── Шаг 2: Установить Python ─────────────────────────────────────────
-      - name: Set up Python 3.11
+      - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.10"
 
-      # ── Шаг 3: Кеширование (ускоряет повторные сборки с ~30 мин до ~5) ──
-      - name: Cache Buildozer global directory
+      - name: Cache Buildozer
         uses: actions/cache@v4
         with:
-          path: ~/.buildozer
-          key: buildozer-${{ hashFiles('buildozer.spec') }}
-          restore-keys: buildozer-
+          path: |
+            ~/.buildozer
+            ~/.cache/pip
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
 
-      - name: Cache pip packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('buildozer.spec') }}
-
-      # ── Шаг 4: Системные зависимости для Buildozer ───────────────────────
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            git zip unzip openjdk-17-jdk \
-            autoconf libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev \
-            libtinfo5 cmake libffi-dev libssl-dev \
-            python3-pip
+            git zip unzip \
+            openjdk-17-jdk \
+            autoconf automake libtool \
+            pkg-config \
+            zlib1g-dev \
+            libncurses5-dev libncursesw5-dev \
+            cmake libffi-dev libssl-dev \
+            python3-pip \
+            build-essential \
+            libltdl-dev
 
-      # ── Шаг 5: Установить Buildozer + Cython ─────────────────────────────
-      - name: Install Buildozer and Cython
+      - name: Install Python build tools
         run: |
-          pip install --upgrade pip
-          pip install buildozer cython==0.29.36
+          pip install --upgrade pip setuptools wheel
+          pip install Cython==0.29.36
+          pip install buildozer==1.5.0
 
-      # ── Шаг 6: Собрать APK ───────────────────────────────────────────────
-      - name: Build APK with Buildozer
+      - name: Build APK
         run: |
-          buildozer -v android debug
+          buildozer -v android debug 2>&1 | tee build.log
+        timeout-minutes: 60
 
-      # ── Шаг 7: Найти собранный APK ───────────────────────────────────────
-      - name: Find APK
-        run: find . -name "*.apk" -type f
-
-      # ── Шаг 8: Загрузить APK как артефакт (скачать из GitHub) ────────────
-      - name: Upload APK artifact
+      - name: Upload build log on failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: TGSecretChat-debug.apk
-          path: bin/*.apk
-          retention-days: 30          # Хранить 30 дней
+          name: build-log
+          path: build.log
 
-      # ── Шаг 9 (опционально): Создать GitHub Release ──────────────────────
-      - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main'
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TGSecretChat-debug
+          path: bin/*.apk
+          retention-days: 30
+
+      - name: Create Release
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: "TG Secret Chat v1.0.${{ github.run_number }}"
           files: bin/*.apk
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
